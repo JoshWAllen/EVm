@@ -1,1 +1,113 @@
+#--------------- Library Imports ------------------#
+from RPLCD import i2c
+import time
+import RPi.GPIO as GPIO
+import socket
+from _thread import *
+import time
+import requests
+import json
+import serial
+
+
+#--------------- Defined Constants --------------- #
+I2C_EXPANDER    = 'PCF8574' 
+LCD_MODE        = 'i2c'     #Communication protocal to communicate with peripheral
+COLS            = 20        #Columns on peripheral
+ROWS            = 4         #Rows on peripheral
+CHARMAP         = 'A00'
+ADDRESS         = 0x27      #Peripheral address on i2c bus
+PORT            = 1         #Port number
+
+GPIO_INTERRUPT  = 7         #GPIO pin to be used as falling edge interrupt
+
+FULL_BITS       = (0b11111,
+                   0b11111,
+                   0b11111,
+                   0b11111,
+                   0b11111,
+                   0b11111,
+                   0b11111,
+                   0b11111
+                   )
+BLOCK_CHAR      = "\x00"
+
+#------------- Global Variables -------------#
+kwh = 0
+
+#Initializing the LCD display
+lcd = i2c.CharLCD(I2C_EXPANDER,
+                    ADDRESS,
+                    port = PORT,
+                    charmap = CHARMAP,
+                    cols = COLS,
+                    rows = ROWS)
+
+lcd.create_char(0, FULL_BITS)
+
+#Declaring GPIO, pulled up to 3.3V
+GPIO.setmode(GPIO.BOARD)
+GPIO.setup(GPIO_INTERRUPT, GPIO.IN, pull_up_down = GPIO.PUD_UP)
+
+#-------------- Function delcarations --------------#
+
+
+def writeLCD(text, pos):
+    lcd.cursor_pos = pos
+    lcd.write_string(text)
+
+def clearScreen():
+    lcd.close(clear=True)
+
+def interruptCallback():
+    global kwh
+    clearScreen()
+    writeLCD("Charging...", (1,0))
+
+    for i in range(COLS):
+        if GPIO.input(GPIO_INTERRUPT) == 1:
+            break;
+        writeLCD(BLOCK_CHAR, (2, i))
+        kwh = 5*(i+1)
+        writeLCD(str(kwh)+"kWh",(1,11))
+        time.sleep(1)
+    postServer(kwh)
+
+def postServer(data):
+    requests.post("http://10.33.141.194:5000/end", json = {"kwh":data})
+
+def pingServer():
+    ping = requests.get("http://10.33.141.194:5000/start").json()
+    return ping["ping"]
+    
+def main():
+    clearScreen()
+    time.sleep(2)
+    first_instance1 = 1
+    first_instance2 = 1
+    #GPIO.add_event_detect(GPIO_INTERRUPT, GPIO.FALLING, callback = interruptCallback, bouncetime=30)
+    while(True):
+        time.sleep(0.5)
+        if(first_instance1):
+            clearScreen()
+            first_instance1=0
+        writeLCD("Welcome to the",(0,0))
+        writeLCD("charging station!",(1,0))
+        writeLCD("Please scan QR code",(2,0))
+        writeLCD("to access web app",(3,0))
+        
+        while(pingServer() == 1):
+            if(first_instance2):
+                clearScreen()
+                first_instance2 = 0
+            writeLCD("Plug into your car",(1,0))
+            writeLCD("to begin charging",(2,0))
+            if(GPIO.input(GPIO_INTERRUPT) == 0):
+                interruptCallback()
+                time.sleep(2)
+                first_instance1 = 1
+                first_instance2 = 1
+                break;
+        time.sleep(1)
+main()
 
